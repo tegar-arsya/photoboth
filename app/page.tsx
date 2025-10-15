@@ -1,5 +1,7 @@
 "use client"
-import { useEffect, useRef, useState } from "react"
+
+import { useCallback, useEffect, useRef, useState } from "react"
+import NextImage from "next/image"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -26,26 +28,26 @@ export default function PhotoboothPage() {
 
   const getGridLayoutTailwind = () =>
     (
-      ({
+      {
         1: "grid-cols-1",
         2: "grid-cols-2",
         3: "grid-cols-3",
         4: "grid-cols-2",
         5: "grid-cols-3",
         6: "grid-cols-3",
-      }) as Record<GridType, string>
+      } as Record<GridType, string>
     )[selectedGrid]
 
   const gridToColsRows = (g: GridType) =>
     g === 1
       ? { cols: 1, rows: 1 }
       : g === 2
-        ? { cols: 2, rows: 1 }
-        : g === 3
-          ? { cols: 3, rows: 1 }
-          : g === 4
-            ? { cols: 2, rows: 2 }
-            : { cols: 3, rows: 2 } // 5 & 6
+      ? { cols: 2, rows: 1 }
+      : g === 3
+      ? { cols: 3, rows: 1 }
+      : g === 4
+      ? { cols: 2, rows: 2 }
+      : { cols: 3, rows: 2 } // 5 & 6
 
   const startCamera = async () => {
     try {
@@ -58,18 +60,20 @@ export default function PhotoboothPage() {
       alert("Tidak dapat mengakses kamera. Pastikan izin kamera telah diberikan.")
     }
   }
+
   const stopCamera = () => {
     if (stream) stream.getTracks().forEach((t) => t.stop())
     setStream(null)
   }
 
   const captureRawFrame = (): string | null => {
-    if (!videoRef.current) return null
     const v = videoRef.current
+    if (!v) return null
     const c = document.createElement("canvas")
     c.width = v.videoWidth
     c.height = v.videoHeight
-    const ctx = c.getContext("2d")!
+    const ctx = c.getContext("2d")
+    if (!ctx) return null
     ctx.scale(-1, 1) // mirror selfie
     ctx.drawImage(v, -c.width, 0, c.width, c.height)
     return c.toDataURL("image/png")
@@ -109,27 +113,33 @@ export default function PhotoboothPage() {
     }
   }
 
-  async function buildFinalImage(): Promise<string> {
+  const buildFinalImage = useCallback(async (): Promise<string> => {
     const { cols, rows } = gridToColsRows(selectedGrid)
     const W = cols * 800 + 200
     const H = rows * 800 + 300
 
     const bitmaps = await Promise.all(
       capturedPhotos.map(async (p) => {
-        if ("createImageBitmap" in window) {
-          const res = await fetch(p.dataUrl)
-          const blob = await res.blob()
-          // @ts-ignore
-          return await createImageBitmap(blob)
-        } else {
-          return new Promise<HTMLImageElement>((resolve, reject) => {
-            const img = new Image()
-            img.crossOrigin = "anonymous"
-            img.onload = () => resolve(img)
-            img.onerror = reject
-            img.src = p.dataUrl
-          })
+        const res = await fetch(p.dataUrl)
+        const blob = await res.blob()
+
+        // Ketik aman untuk createImageBitmap
+        const win = window as unknown as {
+          createImageBitmap?: (b: Blob) => Promise<ImageBitmap>
         }
+
+        if (win.createImageBitmap) {
+          return await win.createImageBitmap(blob)
+        }
+
+        // Fallback ke HTMLImageElement
+        return await new Promise<HTMLImageElement>((resolve, reject) => {
+          const img = new window.Image()
+          img.crossOrigin = "anonymous"
+          img.onload = () => resolve(img)
+          img.onerror = reject
+          img.src = p.dataUrl
+        })
       }),
     )
 
@@ -137,8 +147,6 @@ export default function PhotoboothPage() {
     canvas.width = W
     canvas.height = H
     const ctx = canvas.getContext("2d")!
-
-    // helper rounded-rect
     const rr = (x: number, y: number, w: number, h: number, r: number) => {
       ctx.beginPath()
       ctx.moveTo(x + r, y)
@@ -149,15 +157,13 @@ export default function PhotoboothPage() {
       ctx.closePath()
     }
 
+    // Background bingkai
     const drawBackground = () => {
       switch (selectedFrame) {
         case "memphis": {
-          // basis krem lembut
           ctx.fillStyle = "#FFF4E8"
           ctx.fillRect(0, 0, W, H)
-          // warna pop non-mainstream (maks 4 agar tetap kohesif)
           const colors = ["#FF6BA5", "#5AE6B1", "#5B8CFF", "#FFC857"]
-          // tekstur titik halftone lembut
           ctx.save()
           ctx.globalAlpha = 0.08
           for (let y = 0; y < H; y += 10) {
@@ -169,7 +175,6 @@ export default function PhotoboothPage() {
             }
           }
           ctx.restore()
-          // bentuk geometri acak + zigzag
           const seedCount = Math.ceil((W * H) / 140000) * 28
           for (let i = 0; i < seedCount; i++) {
             const x = Math.random() * W
@@ -197,7 +202,6 @@ export default function PhotoboothPage() {
               ctx.fillStyle = col
               ctx.fill()
             } else if (t === 3) {
-              // squiggle
               ctx.lineWidth = 3
               ctx.strokeStyle = col
               ctx.beginPath()
@@ -208,7 +212,6 @@ export default function PhotoboothPage() {
               }
               ctx.stroke()
             } else {
-              // "confetti" garis pendek
               ctx.strokeStyle = col
               ctx.lineWidth = 4
               ctx.beginPath()
@@ -221,13 +224,11 @@ export default function PhotoboothPage() {
           break
         }
         case "neon": {
-          // latar gelap + grid neon biru-sian dan aksen magenta tipis
           ctx.fillStyle = "#0B0F19"
           ctx.fillRect(0, 0, W, H)
           ctx.save()
           const step = 48
           ctx.lineWidth = 1.25
-          // grid sian glow
           ctx.strokeStyle = "#06E2FF"
           ctx.shadowColor = "#06E2FF"
           ctx.shadowBlur = 12
@@ -244,7 +245,6 @@ export default function PhotoboothPage() {
             ctx.lineTo(W, y)
             ctx.stroke()
           }
-          // aksen magenta diagonal
           ctx.globalAlpha = 0.35
           ctx.strokeStyle = "#FF3CAC"
           ctx.shadowColor = "#FF3CAC"
@@ -259,7 +259,6 @@ export default function PhotoboothPage() {
           break
         }
         case "sunburst": {
-          // sunburst hangat + vignette halus
           ctx.fillStyle = "#FDFCF8"
           ctx.fillRect(0, 0, W, H)
           const cx = W / 2
@@ -276,7 +275,6 @@ export default function PhotoboothPage() {
             ctx.fillStyle = i % 2 === 0 ? "#F9D873" : "#FFE7A3"
             ctx.fill()
           }
-          // radial gradient vignette
           const rg = ctx.createRadialGradient(cx, cy, H * 0.1, cx, cy, H * 1.0)
           rg.addColorStop(0, "rgba(255,255,255,0.5)")
           rg.addColorStop(1, "rgba(255,255,255,0.0)")
@@ -285,7 +283,6 @@ export default function PhotoboothPage() {
           break
         }
         case "checker": {
-          // checker asimetris dengan sedikit distorsi sinus
           const s = 54
           for (let y = 0; y < H; y += s) {
             const offset = Math.sin(y * 0.04) * 12
@@ -295,7 +292,6 @@ export default function PhotoboothPage() {
               ctx.fillRect(x + offset, y, s, s)
             }
           }
-          // garis noise tipis
           ctx.globalAlpha = 0.08
           ctx.strokeStyle = "#111"
           for (let y = 0; y < H; y += 6) {
@@ -308,7 +304,6 @@ export default function PhotoboothPage() {
           break
         }
         case "wavy": {
-          // stripe gelombang dengan palet unik
           ctx.fillStyle = "#F7F4F0"
           ctx.fillRect(0, 0, W, H)
           const bands = [
@@ -342,24 +337,24 @@ export default function PhotoboothPage() {
 
     drawBackground()
 
-    // panel konten
-    const panelX = 60,
-      panelY = 60,
-      panelW = W - 120,
-      panelH = H - 180,
-      panelR = 40
+    // Panel konten
+    const panelX = 60
+    const panelY = 60
+    const panelW = W - 120
+    const panelH = H - 180
+    const panelR = 40
 
     const panelColor =
       selectedFrame === "neon"
         ? "rgba(12,16,28,0.8)"
         : selectedFrame === "checker"
-          ? "rgba(255,255,255,0.92)"
-          : "rgba(255,255,255,0.98)"
+        ? "rgba(255,255,255,0.92)"
+        : "rgba(255,255,255,0.98)"
     ctx.fillStyle = panelColor
     rr(panelX, panelY, panelW, panelH, panelR)
     ctx.fill()
 
-    // aksen panel (stroke/glow)
+    // Aksen panel
     if (selectedFrame === "neon") {
       ctx.save()
       ctx.shadowColor = "#06E2FF"
@@ -383,10 +378,10 @@ export default function PhotoboothPage() {
       ctx.stroke()
     }
 
-    // grid foto
+    // Grid foto
     const gap = 24
-    const C = cols,
-      R = rows
+    const C = cols
+    const R = rows
     const cellW = (panelW - gap * (C - 1) - 40) / C
     const cellH = (panelH - gap * (R - 1) - 40) / R
 
@@ -400,13 +395,13 @@ export default function PhotoboothPage() {
         ctx.save()
         rr(x, y, cellW, cellH, 24)
         ctx.clip()
-        const bmp = bitmaps[idx] as any
+        const bmp = bitmaps[idx] as CanvasImageSource
         ctx.drawImage(bmp, x, y, cellW, cellH)
         ctx.restore()
 
         ctx.lineWidth = 6
         if (selectedFrame === "checker") {
-          ctx.strokeStyle = "#0F172A" // slate-900
+          ctx.strokeStyle = "#0F172A"
         } else if (selectedFrame === "neon") {
           ctx.strokeStyle = "rgba(6,226,255,0.9)"
           ctx.shadowColor = "#06E2FF"
@@ -420,12 +415,13 @@ export default function PhotoboothPage() {
         } else {
           ctx.strokeStyle = "#D1D5DB"
         }
+        rr(x, y, cellW, cellH, 24)
         ctx.stroke()
         idx++
       }
     }
 
-    // caption
+    // Caption
     ctx.textAlign = "center"
     if (selectedFrame === "genz") {
       ctx.fillStyle = "#111827"
@@ -461,12 +457,12 @@ export default function PhotoboothPage() {
     }
 
     return canvas.toDataURL("image/png")
-  }
+  }, [capturedPhotos, selectedFrame, selectedGrid])
 
   useEffect(() => {
     if (step !== "preview") return
     ;(async () => setFinalDataUrl(await buildFinalImage()))()
-  }, [step, selectedGrid, selectedFrame, capturedPhotos])
+  }, [step, buildFinalImage])
 
   const sendEmail = async () => {
     if (!email) return alert("Masukkan email terlebih dahulu")
@@ -516,7 +512,6 @@ export default function PhotoboothPage() {
         <div className="flex items-center justify-center gap-2 md:gap-4">
           {steps.map((s, i) => {
             const active = i === activeIndex
-            const done = i < activeIndex
             return (
               <div key={s.key} className="flex items-center gap-2">
                 <Badge
@@ -697,10 +692,13 @@ export default function PhotoboothPage() {
             <CardContent>
               <div className="mb-4">
                 {finalDataUrl ? (
-                  <img
-                    src={finalDataUrl || "/placeholder.svg"}
+                  <NextImage
+                    src={finalDataUrl}
                     alt="Preview hasil compositing"
-                    className="w-full rounded-lg border"
+                    width={1600}
+                    height={1200}
+                    unoptimized
+                    className="w-full rounded-lg border h-auto"
                   />
                 ) : (
                   <div className="w-full h-64 rounded-lg bg-muted grid place-items-center text-muted-foreground">
